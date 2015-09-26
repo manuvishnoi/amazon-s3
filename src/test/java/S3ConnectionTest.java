@@ -1,13 +1,20 @@
 import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.model.AbortMultipartUploadRequest;
 import com.amazonaws.services.s3.model.AmazonS3Exception;
-import com.amazonaws.services.s3.model.Bucket;
+import com.amazonaws.services.s3.model.CompleteMultipartUploadRequest;
+import com.amazonaws.services.s3.model.InitiateMultipartUploadRequest;
+import com.amazonaws.services.s3.model.InitiateMultipartUploadResult;
 import com.amazonaws.services.s3.model.ObjectMetadata;
+import com.amazonaws.services.s3.model.PartETag;
 import com.amazonaws.services.s3.model.S3Object;
 import com.amazonaws.services.s3.model.S3ObjectInputStream;
+import com.amazonaws.services.s3.model.UploadPartRequest;
 import com.amazonaws.util.IOUtils;
+import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
@@ -72,11 +79,51 @@ public class S3ConnectionTest {
 
 
     @Test
-    public void test4UploadFile() {
-        List<Bucket> buckets = s3Connection.listBuckets();
-        System.out.print(buckets);
-        Assert.assertNotNull(buckets);
+    public void test4MultiPartUploadFile() {
+        long partSize = 5242880; // Set part size to 5 MB.
+
+        InitiateMultipartUploadRequest initRequest = new
+                InitiateMultipartUploadRequest(bucketName, key);
+        InitiateMultipartUploadResult initResponse =
+                s3Connection.initiateMultipartUpload(initRequest);
+        File file = new File("src/test/resources/test.jpg");
+        long contentLength = file.length();
+        List<PartETag> partETags = new ArrayList<PartETag>();
+
+        try {
+            // Step 2: Upload parts.
+            long filePosition = 0;
+            for (int i = 1; filePosition < contentLength; i++) {
+                // Last part can be less than 5 MB. Adjust part size.
+                partSize = Math.min(partSize, (contentLength - filePosition));
+
+                // Create request to upload a part.
+                UploadPartRequest uploadRequest = new UploadPartRequest()
+                        .withBucketName(bucketName).withKey(key)
+                        .withUploadId(initResponse.getUploadId()).withPartNumber(i)
+                        .withFileOffset(filePosition)
+                        .withFile(file)
+                        .withPartSize(partSize);
+
+                // Upload part and add response to our list.
+                partETags.add(
+                        s3Connection.uploadPart(uploadRequest).getPartETag());
+
+                filePosition += partSize;
+            }
+
+            // Step 3: Complete.
+            CompleteMultipartUploadRequest compRequest = new
+                    CompleteMultipartUploadRequest(
+                    bucketName,
+                    key,
+                    initResponse.getUploadId(),
+                    partETags);
+
+            s3Connection.completeMultipartUpload(compRequest);
+        } catch (Exception e) {
+            s3Connection.abortMultipartUpload(new AbortMultipartUploadRequest(
+                    bucketName, key, initResponse.getUploadId()));
+        }
     }
-
-
 }
